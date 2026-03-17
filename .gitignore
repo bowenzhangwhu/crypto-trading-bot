@@ -43,8 +43,8 @@ logs/*.log
 logs/*.log.*
 *.log
 
-# Data
-data/
+# Data (项目数据目录，不是src/data模块)
+/data/
 *.csv
 *.db
 *.sqlite
