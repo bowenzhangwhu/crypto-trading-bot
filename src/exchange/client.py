@@ -31,6 +31,11 @@ class ExchangeClient:
         self.leverage = TRADE_CONFIG["leverage"]
         self._initialized = True
     
+    def _ensure_initialized(self):
+        """确保交易所已初始化"""
+        if self.exchange is None:
+            self.initialize()
+    
     def initialize(self) -> bool:
         """初始化交易所连接"""
         try:
@@ -145,12 +150,14 @@ class ExchangeClient:
     
     def fetch_balance(self) -> Dict[str, Any]:
         """获取账户余额"""
+        self._ensure_initialized()
         return self.exchange.fetch_balance()
     
     def fetch_ohlcv(self, symbol: Optional[str] = None, 
                     timeframe: Optional[str] = None,
                     limit: Optional[int] = None) -> List[List]:
         """获取K线数据"""
+        self._ensure_initialized()
         symbol = symbol or self.symbol
         timeframe = timeframe or TRADE_CONFIG['timeframe']
         limit = limit or TRADE_CONFIG['data_points']
@@ -159,11 +166,13 @@ class ExchangeClient:
     
     def fetch_positions(self, symbol: Optional[str] = None) -> List[Dict]:
         """获取持仓信息"""
+        self._ensure_initialized()
         symbols = [symbol or self.symbol]
         return self.exchange.fetch_positions(symbols)
     
     def fetch_ticker(self, symbol: Optional[str] = None) -> Dict:
         """获取行情数据"""
+        self._ensure_initialized()
         symbol = symbol or self.symbol
         return self.exchange.fetch_ticker(symbol)
     
@@ -180,6 +189,7 @@ class ExchangeClient:
         Returns:
             订单信息
         """
+        self._ensure_initialized()
         params = {'tag': TRADE_CONFIG['execution']['order_tag']}
         if reduce_only:
             params['reduceOnly'] = True
