@@ -50,8 +50,9 @@ class OKXWebSocketClient:
         self.reconnect_attempts = 0
         
         # 心跳机制
-        self.heartbeat_interval = 25  # OKX要求30秒内必须有消息
-        self.heartbeat_thread = None
+        self.heartbeat_interval = 20  # OKX要求30秒内必须有消息，设置20秒更安全
+        self.heartbeat_thread_public = None
+        self.heartbeat_thread_private = None
         self.last_ping_time = 0
     
     def _generate_signature(self, timestamp: str) -> str:
@@ -70,35 +71,40 @@ class OKXWebSocketClient:
         self.is_connected = True
         self.reconnect_attempts = 0
         
-        # 启动心跳
-        self._start_heartbeat()
+        # 启动心跳（每个连接独立的心跳）
+        self._start_heartbeat(is_private)
         
         if is_private:
             self._login_private(ws)
     
-    def _start_heartbeat(self):
+    def _start_heartbeat(self, is_private=False):
         """启动心跳线程"""
-        if self.heartbeat_thread and self.heartbeat_thread.is_alive():
+        thread_attr = 'heartbeat_thread_private' if is_private else 'heartbeat_thread_public'
+        ws_attr = 'ws_private' if is_private else 'ws_public'
+        
+        # 检查是否已有运行中的心跳线程
+        existing_thread = getattr(self, thread_attr)
+        if existing_thread and existing_thread.is_alive():
             return
         
         def heartbeat_loop():
-            while self.is_running and self.is_connected:
+            conn_type = '私有' if is_private else '公有'
+            while self.is_running:
                 time.sleep(self.heartbeat_interval)
-                if self.is_connected:
+                ws = getattr(self, ws_attr)
+                if ws and ws.sock:
                     try:
-                        # 发送ping消息
-                        ping_msg = {"op": "ping"}
-                        if self.ws_public and self.ws_public.sock:
-                            self.ws_public.send(json.dumps(ping_msg))
-                        if self.ws_private and self.ws_private.sock:
-                            self.ws_private.send(json.dumps(ping_msg))
-                        logger.debug("发送WebSocket心跳")
+                        # OKX使用字符串 "ping" 作为心跳
+                        ws.send('ping')
+                        logger.debug(f"发送WebSocket {conn_type}心跳")
                     except Exception as e:
-                        logger.warning(f"心跳发送失败: {e}")
+                        logger.warning(f"心跳发送失败 ({conn_type}): {e}")
+                        break
         
-        self.heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
-        self.heartbeat_thread.start()
-        logger.debug("心跳线程已启动")
+        thread = threading.Thread(target=heartbeat_loop, daemon=True)
+        setattr(self, thread_attr, thread)
+        thread.start()
+        logger.debug(f"心跳线程已启动 ({'私有' if is_private else '公有'})")
     
     def _login_private(self, ws):
         """登录私有频道"""
@@ -121,12 +127,12 @@ class OKXWebSocketClient:
     def _on_message(self, ws, message, is_private=False):
         """收到消息回调"""
         try:
-            data = json.loads(message)
-            
-            # 处理pong响应
-            if 'pong' in data:
-                logger.debug(f"收到pong: {data['pong']}")
+            # 处理pong响应 (OKX返回 "pong" 字符串)
+            if message == 'pong':
+                logger.debug("收到pong")
                 return
+            
+            data = json.loads(message)
             
             # 处理登录响应
             if data.get('event') == 'login':
@@ -279,9 +285,12 @@ class OKXWebSocketClient:
         }
         
         ws = self.ws_private if is_private else self.ws_public
-        if ws and self.is_connected:
-            ws.send(json.dumps(msg))
-            logger.debug(f"订阅频道: {sub_key}")
+        if ws and ws.sock:
+            try:
+                ws.send(json.dumps(msg))
+                logger.debug(f"订阅频道: {sub_key}")
+            except Exception as e:
+                logger.warning(f"订阅失败 {sub_key}: {e}")
     
     def _resubscribe_private(self):
         """重新订阅私有频道"""
