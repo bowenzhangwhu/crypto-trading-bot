@@ -133,20 +133,32 @@ class WebSocketManager:
         """启动WebSocket连接"""
         logger.info(f"启动WebSocket管理器，交易对: {symbol}")
         
+        # 转换交易对格式 (DOGE/USDT:USDT -> DOGE-USDT-SWAP)
+        inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
+        
         # 连接WebSocket
         self.client.connect()
         
-        # 等待连接建立
+        # 等待连接建立（给足够时间）
         import time
-        time.sleep(2)
+        max_wait = 10
+        waited = 0
+        while waited < max_wait:
+            time.sleep(0.5)
+            waited += 0.5
+            if self.client.is_connected:
+                break
+        
+        if not self.client.is_connected:
+            logger.warning("WebSocket连接未在预期时间内建立，继续尝试订阅...")
         
         # 订阅公有频道
-        self.client.subscribe_ticker(symbol)
-        self.client.subscribe_orderbook(symbol)
+        self.client.subscribe_ticker(inst_id)
+        self.client.subscribe_orderbook(inst_id)
         
-        # 订阅私有频道
-        self.client.subscribe_positions('SWAP')
-        self.client.subscribe_orders('SWAP')
+        # 订阅私有频道（使用正确的instType格式）
+        self.client.subscribe_positions('SWAP', inst_id)
+        self.client.subscribe_orders('SWAP', inst_id)
         
         self._last_saved = {}
         

@@ -263,12 +263,14 @@ class OKXWebSocketClient:
         """订阅成交数据"""
         self._subscribe('trades', inst_id, False)
     
-    def subscribe_positions(self, inst_type: str = 'SWAP'):
+    def subscribe_positions(self, inst_type: str = 'SWAP', inst_id: str = None):
         """订阅持仓数据（私有）"""
+        # positions频道使用instType而不是instId
         self._subscribe('positions', inst_type, True)
     
-    def subscribe_orders(self, inst_type: str = 'SWAP'):
+    def subscribe_orders(self, inst_type: str = 'SWAP', inst_id: str = None):
         """订阅订单数据（私有）"""
+        # orders频道使用instType而不是instId
         self._subscribe('orders', inst_type, True)
     
     def _subscribe(self, channel: str, inst_id: str, is_private: bool):
@@ -276,12 +278,20 @@ class OKXWebSocketClient:
         sub_key = f"{channel}:{inst_id}"
         self.subscriptions.add(sub_key)
         
+        # 构建订阅参数
+        arg = {"channel": channel}
+        
+        # 不同频道使用不同参数
+        if channel in ['positions', 'orders', 'account']:
+            # 这些频道使用instType
+            arg["instType"] = inst_id if inst_id else 'SWAP'
+        else:
+            # 其他频道使用instId
+            arg["instId"] = inst_id
+        
         msg = {
             "op": "subscribe",
-            "args": [{
-                "channel": channel,
-                "instId": inst_id
-            }]
+            "args": [arg]
         }
         
         ws = self.ws_private if is_private else self.ws_public

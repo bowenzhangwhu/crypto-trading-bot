@@ -89,7 +89,15 @@ def create_app():
         if positions:
             return jsonify(positions[0])
         
-        return jsonify({'error': 'No position'}), 404
+        # 返回空持仓而不是404
+        return jsonify({
+            'symbol': TRADE_CONFIG['symbol'],
+            'side': None,
+            'size': 0,
+            'entry_price': 0,
+            'unrealized_pnl': 0,
+            'status': 'no_position'
+        })
     
     @app.route('/api/trades')
     def api_trades():
