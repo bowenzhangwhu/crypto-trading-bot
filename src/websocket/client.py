@@ -48,6 +48,11 @@ class OKXWebSocketClient:
         self.reconnect_interval = 5
         self.max_reconnect_attempts = 10
         self.reconnect_attempts = 0
+        
+        # 心跳机制
+        self.heartbeat_interval = 25  # OKX要求30秒内必须有消息
+        self.heartbeat_thread = None
+        self.last_ping_time = 0
     
     def _generate_signature(self, timestamp: str) -> str:
         """生成签名"""
@@ -65,8 +70,35 @@ class OKXWebSocketClient:
         self.is_connected = True
         self.reconnect_attempts = 0
         
+        # 启动心跳
+        self._start_heartbeat()
+        
         if is_private:
             self._login_private(ws)
+    
+    def _start_heartbeat(self):
+        """启动心跳线程"""
+        if self.heartbeat_thread and self.heartbeat_thread.is_alive():
+            return
+        
+        def heartbeat_loop():
+            while self.is_running and self.is_connected:
+                time.sleep(self.heartbeat_interval)
+                if self.is_connected:
+                    try:
+                        # 发送ping消息
+                        ping_msg = {"op": "ping"}
+                        if self.ws_public and self.ws_public.sock:
+                            self.ws_public.send(json.dumps(ping_msg))
+                        if self.ws_private and self.ws_private.sock:
+                            self.ws_private.send(json.dumps(ping_msg))
+                        logger.debug("发送WebSocket心跳")
+                    except Exception as e:
+                        logger.warning(f"心跳发送失败: {e}")
+        
+        self.heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+        self.heartbeat_thread.start()
+        logger.debug("心跳线程已启动")
     
     def _login_private(self, ws):
         """登录私有频道"""
@@ -91,6 +123,11 @@ class OKXWebSocketClient:
         try:
             data = json.loads(message)
             
+            # 处理pong响应
+            if 'pong' in data:
+                logger.debug(f"收到pong: {data['pong']}")
+                return
+            
             # 处理登录响应
             if data.get('event') == 'login':
                 if data.get('code') == '0':
@@ -104,6 +141,11 @@ class OKXWebSocketClient:
             # 处理订阅响应
             if data.get('event') in ['subscribe', 'unsubscribe']:
                 logger.debug(f"订阅响应: {data}")
+                return
+            
+            # 处理错误消息
+            if data.get('event') == 'error':
+                logger.error(f"WebSocket错误消息: {data}")
                 return
             
             # 处理频道数据
@@ -148,24 +190,31 @@ class OKXWebSocketClient:
     def _on_close(self, ws, close_status_code, close_msg, is_private=False):
         """连接关闭回调"""
         logger.warning(f"WebSocket {'私有' if is_private else '公有'}连接关闭: {close_status_code} - {close_msg}")
+        was_connected = self.is_connected
         self.is_connected = False
         
-        # 尝试重连
-        if self.is_running and self.reconnect_attempts < self.max_reconnect_attempts:
+        # 尝试重连（只在非正常关闭时重连）
+        if self.is_running and was_connected and self.reconnect_attempts < self.max_reconnect_attempts:
             self.reconnect_attempts += 1
             logger.info(f"{self.reconnect_interval}秒后尝试重连... (尝试 {self.reconnect_attempts}/{self.max_reconnect_attempts})")
             time.sleep(self.reconnect_interval)
+            # 清理旧连接
+            if is_private:
+                self.ws_private = None
+            else:
+                self.ws_public = None
             self.connect()
     
     def connect(self):
         """建立WebSocket连接"""
         self.is_running = True
         
-        # 连接公有频道
-        threading.Thread(target=self._connect_public, daemon=True).start()
+        # 只在未连接时创建新线程
+        if not self.ws_public or not self.ws_public.sock:
+            threading.Thread(target=self._connect_public, daemon=True).start()
         
         # 连接私有频道
-        if self.api_key:
+        if self.api_key and (not self.ws_private or not self.ws_private.sock):
             threading.Thread(target=self._connect_private, daemon=True).start()
     
     def _connect_public(self):
